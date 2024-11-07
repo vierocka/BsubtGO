@@ -19,18 +19,18 @@ jobs:
 
       - name: Install dependencies
         run: |
-          install.packages(c('shiny', 'rsconnect', 'DT'))
-          if (!requireNamespace('BiocManager', quietly = TRUE))
+          Rscript -e "install.packages(c('shiny', 'rsconnect', 'DT'))"
+          Rscript -e "if (!requireNamespace('BiocManager', quietly = TRUE))"
             install.packages('BiocManager')
-          BiocManager::install('topGO')
+          Rscript -e "BiocManager::install('topGO')"
 
       - name: Deploy to shinyapps.io
         env:
           SHINYAPPSIO_TOKEN: ${{ secrets.SHINYAPPSIO_TOKEN }}
           SHINYAPPSIO_SECRET: ${{ secrets.SHINYAPPSIO_SECRET }}
         run: |
-          library(rsconnect)
+          Rscript -e "library(rsconnect)
           rsconnect::setAccountInfo(name='growthcurvedb',
                                     token=Sys.getenv('SHINYAPPSIO_TOKEN'),
                                     secret=Sys.getenv('SHINYAPPSIO_SECRET'))
-          rsconnect::deployApp(appDir = '.', appName = 'Bsub-strains-GOEA')
+          rsconnect::deployApp(appDir = '.', appName = 'Bsub-strains-GOEA')"
