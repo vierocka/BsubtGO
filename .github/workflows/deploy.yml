@@ -33,4 +33,4 @@ jobs:
           rsconnect::setAccountInfo(name='yourname',
                                     token=Sys.getenv('SHINYAPPSIO_TOKEN'),
                                     secret=Sys.getenv('SHINYAPPSIO_SECRET'))
-          rsconnect::deployApp(appDir = '.', appName = 'your-app-name')
+          rsconnect::deployApp(appDir = '.', appName = 'Bsub-strains-GOEA')
