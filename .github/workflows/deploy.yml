@@ -1,0 +1,36 @@
+name: Deploy Shiny App
+
+on:
+  push:
+    branches:
+      - main  # Replace with your default branch
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Set up R
+        uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: '4.3.1'
+
+      - name: Install dependencies
+        run: |
+          install.packages(c('shiny', 'rsconnect', 'DT'))
+          if (!requireNamespace('BiocManager', quietly = TRUE))
+            install.packages('BiocManager')
+          BiocManager::install('topGO')
+
+      - name: Deploy to shinyapps.io
+        env:
+          SHINYAPPSIO_TOKEN: ${{ secrets.SHINYAPPSIO_TOKEN }}
+          SHINYAPPSIO_SECRET: ${{ secrets.SHINYAPPSIO_SECRET }}
+        run: |
+          library(rsconnect)
+          rsconnect::setAccountInfo(name='yourname',
+                                    token=Sys.getenv('SHINYAPPSIO_TOKEN'),
+                                    secret=Sys.getenv('SHINYAPPSIO_SECRET'))
+          rsconnect::deployApp(appDir = '.', appName = 'your-app-name')
