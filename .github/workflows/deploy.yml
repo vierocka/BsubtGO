@@ -26,7 +26,7 @@ jobs:
       - name: Install dependencies
         run: |
           Rscript -e "install.packages(c('shiny', 'rsconnect', 'DT'))"
-          Rscript -e "if (!requireNamespace('BiocManager', quietly = TRUE) install.packages('BiocManager')"
+          Rscript -e "if (!requireNamespace('BiocManager', quietly = TRUE)) install.packages('BiocManager', repos='https://cran.rstudio.com/')"
           Rscript -e "BiocManager::install('topGO')"
 
       - name: Deploy to shinyapps.io
