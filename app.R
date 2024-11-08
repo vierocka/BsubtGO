@@ -1,7 +1,6 @@
 library(topGO)
 library(shiny)
 library(DT)
-library(clusterProfiler)
 
 # setwd("~/Dropbox/Melih_AGMeier") # modify the path to the files
 
