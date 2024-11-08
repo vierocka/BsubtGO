@@ -38,4 +38,4 @@ jobs:
           rsconnect::setAccountInfo(name='growthcurvedb',
                                     token=Sys.getenv('SHINYAPPSIO_TOKEN'),
                                     secret=Sys.getenv('SHINYAPPSIO_SECRET'))
-          rsconnect::deployApp(appDir = '.', appName = 'Bsub-strains-GOEA')"
+          rsconnect::deployApp(appDir = '.', appName = 'Bsub-strains-GOEA', appFiles = c('app.R', 'PG10id_BSUBid_goBiolP_goMolF_goCellComp.csv'), logLevel = 'verbose')"
