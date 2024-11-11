@@ -3,9 +3,6 @@ library(DT)
 library(topGO)
 library(clusterProfiler)
 
-# Set working directory if necessary
-setwd("~/Dropbox/Melih_AGMeier") # Modify the path to your files
-
 # Load data outside the server function to improve performance
 allGOwithConv <- read.table("PG10id_BSUBid_goBiolP_goMolF_goCellComp.csv", sep="\t", header = TRUE)
 
