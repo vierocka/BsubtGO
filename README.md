@@ -200,7 +200,7 @@ The app depends only on CRAN packages (`shiny`, `DT`) — no Bioconductor requir
 ```r
 library(rsconnect)
 rsconnect::setAccountInfo(
-  name   = "vierakovacova",
+  name   = "projectnameofshinyioapps",
   token  = "YOUR_TOKEN",   # shinyapps.io → Account → Tokens
   secret = "YOUR_SECRET"
 )
