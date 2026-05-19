@@ -88,6 +88,7 @@ server <- function(input, output, session) {
   observeEvent(input$strain, {
     if (input$strain == "PG10") {
       updateTextAreaInput(session, "id_list",
+                          # PG10 always any
         placeholder = "ANY33920.1, ANY33921.1, ANY33922.1, ANY33923.1")
     } else {
       updateTextAreaInput(session, "id_list",
