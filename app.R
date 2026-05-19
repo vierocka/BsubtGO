@@ -1,88 +1,80 @@
 library(shiny)
 library(DT)
 library(topGO)
-library(clusterProfiler)
 
-# Set working directory if necessary
-setwd("~/Dropbox/Melih_AGMeier") # Modify the path to your files
+allGOwithConv <- read.table(
+  "PG10id_BSUBid_goBiolP_goMolF_goCellComp.csv",
+  sep = "\t", header = TRUE, stringsAsFactors = FALSE
+)
 
-# Load data outside the server function to improve performance
-allGOwithConv <- read.table("PG10id_BSUBid_goBiolP_goMolF_goCellComp.csv", sep="\t", header = TRUE)
+# Build a named list mapping gene IDs (id_col) to GO terms (go_col).
+# Rows with no GO annotations are silently skipped.
+prepareGene2GO <- function(data, id_col, go_col) {
+  universe <- as.character(data[, id_col])
 
-# Prepare the gene universe and gene-to-GO mappings once
-geneUniverse <- allGOwithConv$IDbsub
+  rows <- apply(data[, c(id_col, go_col)], 1, function(x) {
+    terms <- unlist(strsplit(as.character(x[2]), split = " "))
+    terms <- terms[nzchar(terms)]
+    if (length(terms) == 0) return(NULL)
+    list(id = x[1], terms = terms)
+  })
+  rows <- rows[!sapply(rows, is.null)]
 
-# Prepare gene-to-GO mappings for each ontology
-prepareGene2GO <- function(data, column_index) {
-  geneID2GOdata <- data[, c(2, column_index)]
-  
-  # Function to split GO terms and associate with gene IDs
-  myExtensionFun <- function(x) {
-    GOlist <- unlist(strsplit(as.character(x[2]), split = " "))
-    IDarray <- rep(x[1], length(GOlist))
-    ID_GO <- cbind(IDarray, GOlist)
-    return(ID_GO)
-  }
-  
-  # Apply the function to each row
-  result_list <- apply(geneID2GOdata, 1, myExtensionFun)
-  
-  # Combine the results into a data frame
-  ID_GO_df <- do.call(rbind, result_list)
-  ID_GO_df <- as.data.frame(ID_GO_df)
-  colnames(ID_GO_df) <- c("GeneID", "GOterm")
-  
-  # Create gene-to-GO mapping
-  geneID2GO <- by(ID_GO_df$GOterm, ID_GO_df$GeneID, function(x) as.character(x))
-  
-  # Ensure that the names of geneID2GO match your gene universe
-  geneID2GO <- geneID2GO[names(geneID2GO) %in% geneUniverse]
-  
-  return(geneID2GO)
+  ids   <- sapply(rows, `[[`, "id")
+  terms <- lapply(rows, `[[`, "terms")
+  mapping <- setNames(terms, ids)
+  mapping[names(mapping) %in% universe]
 }
 
-# Prepare mappings for BP, MF, and CC
-geneID2GObp <- prepareGene2GO(allGOwithConv, 3)
-geneID2GOmf <- prepareGene2GO(allGOwithConv, 4)
-geneID2GOcc <- prepareGene2GO(allGOwithConv, 5)
+# Pre-compute mappings for both strains so startup is fast per-user
+geneUniverse_bsub <- as.character(allGOwithConv$IDbsub)
+geneUniverse_pg10 <- as.character(allGOwithConv$IDpg10)
 
-# Define UI for the application
+gene2GO_bsub <- list(
+  BP = prepareGene2GO(allGOwithConv, 2, 3),
+  MF = prepareGene2GO(allGOwithConv, 2, 4),
+  CC = prepareGene2GO(allGOwithConv, 2, 5)
+)
+gene2GO_pg10 <- list(
+  BP = prepareGene2GO(allGOwithConv, 1, 3),
+  MF = prepareGene2GO(allGOwithConv, 1, 4),
+  CC = prepareGene2GO(allGOwithConv, 1, 5)
+)
+
+# topGO sometimes returns p-values as strings like "< 1e-30"
+parseTopGOPval <- function(x) {
+  suppressWarnings(as.numeric(sub("^<\\s*", "", x)))
+}
+
 ui <- fluidPage(
-  # Application title
   titlePanel("Gene Ontology (GO) Term Analysis of Bacillus subtilis"),
-  
-  # Sidebar layout with input and output definitions
   sidebarLayout(
     sidebarPanel(
+      selectInput(
+        inputId = "strain",
+        label = "Select strain of Bacillus subtilis:",
+        choices = c("BSUB168", "PG10"),
+        selected = "BSUB168"
+      ),
       textAreaInput(
         inputId = "id_list",
-        label = "Enter Gene IDs separated by commas:",
+        label = "Enter Gene IDs (comma- or newline-separated):",
         placeholder = "BSU00240, BSU00260, BSU00280, BSU00290, BSU00300",
         rows = 6
       ),
-      selectInput(
-        inputId = "keytype",
-        label = "Select strain of Bacillus subtilis:",
-        choices = c("PG10", "BSUB168"),
-        selected = "PG10"
-      ),
       actionButton("analyze", "Analyze", class = "btn-primary"),
-      br(),
-      br(),
+      br(), br(),
       downloadButton("downloadData", "Download Results")
     ),
-    
     mainPanel(
       h4("Biological Processes:"),
       br(),
       DTOutput("result_tableBP"),
-      br(),
-      br(),
+      br(), br(),
       h4("Molecular Function:"),
       br(),
       DTOutput("result_tableMF"),
-      br(),
-      br(),
+      br(), br(),
       h4("Cellular Components:"),
       br(),
       DTOutput("result_tableCC")
@@ -90,91 +82,95 @@ ui <- fluidPage(
   )
 )
 
-# Define server logic
 server <- function(input, output, session) {
-  
-  # Reactive expression to process input IDs and perform analysis
-  analysis_results <- eventReactive(input$analyze, {
-    req(input$id_list)  # Ensure input is available
-    
-    # Split the input IDs into a vector
-    id_vector <- unlist(strsplit(input$id_list, split = ",|\\s+"))
-    id_vector <- trimws(id_vector)  # Remove leading/trailing whitespace
-    id_vector <- id_vector[nzchar(id_vector)]  # Remove empty strings
-    
-    validate(
-      need(length(id_vector) > 0, "Please enter at least one gene ID.")
-    )
-    
-    # Ensure IDs are in the gene universe
-    genesOfInterest <- id_vector[id_vector %in% geneUniverse]
-    
-    validate(
-      need(length(genesOfInterest) > 0, "No matching Gene IDs found in the gene universe.")
-    )
-    
-    # Create a factor indicating genes of interest witBSU00240, BSU00260, BSU00280,BSU00290,BSU00300,BSU00310,BSU00320,BSU00330,BSU00340, BSU00350,BSU00360,BSU00370,BSU00380, BSU00390hin the gene universe
-    geneList <- factor(as.integer(geneUniverse %in% genesOfInterest))
-    names(geneList) <- geneUniverse
-    
-    # Function to perform GO enrichment analysis
-    performGOAnalysis <- function(ontology, gene2GO) {
-      GOdata <- new("topGOdata",
-                    description = "GO Enrichment Analysis",
-                    ontology = ontology,
-                    allGenes = geneList,
-                    annot = annFUN.gene2GO,
-                    gene2GO = gene2GO)
-      
-      resultFisher <- runTest(GOdata, algorithm = "classic", statistic = "fisher")
-      
-      # Retrieve and format the results
-      allResults <- GenTable(GOdata,
-                             classicFisher = resultFisher,
-                             orderBy = "classicFisher",
-                             ranksOf = "classicFisher",
-                             topNodes = 10)
-      
-      # Adjust p-values
-      adjP <- p.adjust(allResults$classicFisher, method = "fdr")
-      allResults$FDR <- adjP
-      
-      return(allResults)
+
+  # Update placeholder text to match the selected strain
+  observeEvent(input$strain, {
+    if (input$strain == "PG10") {
+      updateTextAreaInput(session, "id_list",
+        placeholder = "ANY33920.1, ANY33921.1, ANY33922.1, ANY33923.1")
+    } else {
+      updateTextAreaInput(session, "id_list",
+        placeholder = "BSU00240, BSU00260, BSU00280, BSU00290, BSU00300")
     }
-    
-    # Perform analysis for each ontology
-    allResultsBP <- performGOAnalysis("BP", geneID2GObp)
-    allResultsMF <- performGOAnalysis("MF", geneID2GOmf)
-    allResultsCC <- performGOAnalysis("CC", geneID2GOcc)
-    
-    # Return a list of results
-    list(BP = allResultsBP, MF = allResultsMF, CC = allResultsCC)
   })
-  
-  # Render the results in DataTables
+
+  analysis_results <- eventReactive(input$analyze, {
+    req(input$id_list)
+
+    id_vector <- unlist(strsplit(input$id_list, split = "[,\r\n]+"))
+    id_vector <- trimws(id_vector)
+    id_vector <- id_vector[nzchar(id_vector)]
+
+    validate(need(length(id_vector) > 0, "Please enter at least one gene ID."))
+
+    if (input$strain == "PG10") {
+      universe <- geneUniverse_pg10
+      g2go     <- gene2GO_pg10
+    } else {
+      universe <- geneUniverse_bsub
+      g2go     <- gene2GO_bsub
+    }
+
+    genesOfInterest <- id_vector[id_vector %in% universe]
+    validate(need(
+      length(genesOfInterest) > 0,
+      paste0(
+        "No matching Gene IDs found for strain ", input$strain, ". ",
+        "Make sure your IDs match the selected strain ",
+        "(e.g. BSU00240 for BSUB168, ANY33920.1 for PG10)."
+      )
+    ))
+
+    geneList <- factor(as.integer(universe %in% genesOfInterest))
+    names(geneList) <- universe
+
+    runOntology <- function(ontology) {
+      GOdata <- new("topGOdata",
+        description = "GO Enrichment Analysis",
+        ontology    = ontology,
+        allGenes    = geneList,
+        annot       = annFUN.gene2GO,
+        gene2GO     = g2go[[ontology]])
+
+      resultFisher <- runTest(GOdata, algorithm = "classic", statistic = "fisher")
+
+      res <- GenTable(GOdata,
+        classicFisher = resultFisher,
+        orderBy       = "classicFisher",
+        ranksOf       = "classicFisher",
+        topNodes      = 20)
+
+      res$FDR <- p.adjust(parseTopGOPval(res$classicFisher), method = "fdr")
+      res
+    }
+
+    list(
+      BP = runOntology("BP"),
+      MF = runOntology("MF"),
+      CC = runOntology("CC")
+    )
+  })
+
   output$result_tableBP <- renderDT({
     req(analysis_results())
     datatable(analysis_results()$BP, options = list(pageLength = 10))
   })
-  
+
   output$result_tableMF <- renderDT({
     req(analysis_results())
     datatable(analysis_results()$MF, options = list(pageLength = 10))
   })
-  
+
   output$result_tableCC <- renderDT({
     req(analysis_results())
     datatable(analysis_results()$CC, options = list(pageLength = 10))
   })
-  
-  # Provide download functionality
+
   output$downloadData <- downloadHandler(
-    filename = function() {
-      paste("GO_analysis_results_", Sys.Date(), ".csv", sep = "")
-    },
+    filename = function() paste0("GO_analysis_results_", Sys.Date(), ".csv"),
     content = function(file) {
       req(analysis_results())
-      # Combine all results into one data frame
       all_results <- rbind(
         cbind(analysis_results()$BP, Ontology = "BP"),
         cbind(analysis_results()$MF, Ontology = "MF"),
@@ -185,5 +181,4 @@ server <- function(input, output, session) {
   )
 }
 
-# Run the application
 shinyApp(ui = ui, server = server)
