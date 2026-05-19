@@ -168,15 +168,20 @@ Genes with no annotation in a given category have an empty field (877 in BiolPro
 
 ### 5. GO enrichment analysis — Shiny app (`app.R`)
 
-The app uses the `topGO` R package. On startup it reads the mapping CSV and pre-computes gene-to-GO list objects for both strains so per-user analysis is fast.
+The app implements GO over-representation analysis using base R only (`shiny` and `DT` are the sole dependencies, both from CRAN). No Bioconductor packages are required.
+
+On startup the app reads the mapping CSV and pre-computes gene-to-GO list objects for both strains. GO term descriptions are loaded from `go_terms.tsv`, a 4,065-term lookup table extracted from `224308.protein.enrichment.terms.v12.0.txt`.
+
+For each GO term, a one-sided Fisher exact test is run via `fisher.test(alternative = "greater")`, testing whether the term is over-represented in the submitted gene list relative to the strain background. This is equivalent to the classic/Fisher algorithm in `topGO`.
 
 | Parameter | Value |
 |-----------|-------|
-| Test | Fisher exact test |
-| Algorithm | classic (no topology weighting) |
+| Test | Fisher exact test, one-sided (over-representation) |
+| Background | All annotated genes in the selected strain |
 | Multiple testing correction | FDR (Benjamini–Hochberg), applied to the top 20 results per ontology |
-| Nodes reported | Top 20 per ontology |
+| Terms reported | Top 20 per ontology (by p-value) |
 | Strains | BSUB168 (`BSU*`) and PG10 (`ANY*.1`) |
+| Dependencies | `shiny`, `DT` (CRAN only) |
 
 > **Limitation:** FDR is calculated on the truncated top-20 list rather than across all tested GO terms. It is indicative but not a genome-wide multiple-testing correction. Treat borderline FDR values with caution.
 
@@ -190,7 +195,7 @@ A standalone exploratory script (not part of the Shiny app) that queries the KEG
 
 ## Deployment
 
-The app is deployed manually using `rsconnect`. The `.Rprofile` sets Bioconductor repositories so shinyapps.io can install `topGO` and its dependencies.
+The app depends only on CRAN packages (`shiny`, `DT`) — no Bioconductor required.
 
 ```r
 library(rsconnect)
@@ -202,7 +207,10 @@ rsconnect::setAccountInfo(
 rsconnect::deployApp(
   appDir   = "path/to/BsubtGO",
   appName  = "BsubtilisGO",
-  appFiles = c("app.R", "PG10id_BSUBid_goBiolP_goMolF_goCellComp.csv", ".Rprofile")
+  appFiles = c("app.R",
+               "PG10id_BSUBid_goBiolP_goMolF_goCellComp.csv",
+               "go_terms.tsv",
+               ".Rprofile")
 )
 ```
 
@@ -214,9 +222,9 @@ rsconnect::deployApp(
 BsubtGO/                                          ← this repository
 ├── app.R                                         ← Shiny app
 ├── PG10id_BSUBid_goBiolP_goMolF_goCellComp.csv  ← GO mapping table (deploy with app)
-├── .Rprofile                                     ← Bioconductor repo config
-├── README.md
-└── rsconnect/                                    ← shinyapps.io deployment metadata
+├── go_terms.tsv                                  ← GO ID → term name lookup (deploy with app)
+├── .Rprofile                                     ← CRAN repo config
+└── README.md
 
 help_files/                                       ← source data and pipeline (not deployed)
 ├── 224308.protein.sequences.v12.0.fa             ← BSU168 proteome (STRING-db v12.0)

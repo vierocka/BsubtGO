@@ -1,6 +1,3 @@
 local({
-  options(repos = c(
-    BiocManager::repositories(),
-    CRAN = "https://cloud.r-project.org"
-  ))
+  options(repos = c(CRAN = "https://cloud.r-project.org"))
 })

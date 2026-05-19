@@ -1,17 +1,21 @@
 library(shiny)
 library(DT)
-library(topGO)
 
 allGOwithConv <- read.table(
   "PG10id_BSUBid_goBiolP_goMolF_goCellComp.csv",
   sep = "\t", header = TRUE, stringsAsFactors = FALSE
 )
 
+goTermNames <- local({
+  df <- read.table("go_terms.tsv", sep = "\t", header = TRUE,
+                   stringsAsFactors = FALSE, quote = "")
+  setNames(df$Term, df$GO.ID)
+})
+
 # Build a named list mapping gene IDs (id_col) to GO terms (go_col).
 # Rows with no GO annotations are silently skipped.
 prepareGene2GO <- function(data, id_col, go_col) {
   universe <- as.character(data[, id_col])
-
   rows <- apply(data[, c(id_col, go_col)], 1, function(x) {
     terms <- unlist(strsplit(as.character(x[2]), split = " "))
     terms <- terms[nzchar(terms)]
@@ -19,14 +23,13 @@ prepareGene2GO <- function(data, id_col, go_col) {
     list(id = x[1], terms = terms)
   })
   rows <- rows[!sapply(rows, is.null)]
-
   ids   <- sapply(rows, `[[`, "id")
   terms <- lapply(rows, `[[`, "terms")
   mapping <- setNames(terms, ids)
   mapping[names(mapping) %in% universe]
 }
 
-# Pre-compute mappings for both strains so startup is fast per-user
+# Pre-compute mappings for both strains
 geneUniverse_bsub <- as.character(allGOwithConv$IDbsub)
 geneUniverse_pg10 <- as.character(allGOwithConv$IDpg10)
 
@@ -41,10 +44,54 @@ gene2GO_pg10 <- list(
   CC = prepareGene2GO(allGOwithConv, 1, 5)
 )
 
-# topGO sometimes returns p-values as strings like "< 1e-30"
-parseTopGOPval <- function(x) {
-  suppressWarnings(as.numeric(sub("^<\\s*", "", x)))
+# Fisher exact test for GO over-representation (one-sided, "greater").
+# Equivalent to topGO classic/Fisher but with no Bioconductor dependency.
+runGOFisher <- function(gene2go, genes_of_interest, universe) {
+  n_universe <- length(universe)
+  n_selected <- length(genes_of_interest)
+
+  all_terms <- unique(unlist(gene2go))
+
+  rows <- lapply(all_terms, function(go_id) {
+    annotated     <- names(gene2go)[vapply(gene2go, function(x) go_id %in% x, logical(1))]
+    n_annotated   <- length(annotated)
+    n_sig         <- sum(genes_of_interest %in% annotated)
+    if (n_sig == 0) return(NULL)
+
+    mat <- matrix(c(
+      n_sig,
+      n_selected - n_sig,
+      n_annotated - n_sig,
+      n_universe - n_selected - (n_annotated - n_sig)
+    ), nrow = 2)
+
+    p <- fisher.test(mat, alternative = "greater")$p.value
+
+    data.frame(
+      GO.ID       = go_id,
+      Term        = unname(goTermNames[go_id] %||% go_id),
+      Annotated   = n_annotated,
+      Significant = n_sig,
+      Expected    = round(n_selected * n_annotated / n_universe, 2),
+      pvalue      = signif(p, 4),
+      stringsAsFactors = FALSE
+    )
+  })
+
+  rows <- rows[!sapply(rows, is.null)]
+  if (length(rows) == 0) return(data.frame(
+    GO.ID = character(), Term = character(), Annotated = integer(),
+    Significant = integer(), Expected = numeric(),
+    pvalue = numeric(), FDR = numeric()
+  ))
+
+  res      <- do.call(rbind, rows)
+  res      <- res[order(res$pvalue), ]
+  res$FDR  <- signif(p.adjust(res$pvalue, method = "fdr"), 4)
+  head(res, 20)
 }
+
+`%||%` <- function(a, b) if (!is.na(a) && nzchar(a)) a else b
 
 ui <- fluidPage(
   titlePanel("Gene Ontology (GO) Term Analysis of Bacillus subtilis"),
@@ -52,15 +99,15 @@ ui <- fluidPage(
     sidebarPanel(
       selectInput(
         inputId = "strain",
-        label = "Select strain of Bacillus subtilis:",
-        choices = c("BSUB168", "PG10"),
+        label   = "Select strain of Bacillus subtilis:",
+        choices  = c("BSUB168", "PG10"),
         selected = "BSUB168"
       ),
       textAreaInput(
-        inputId = "id_list",
-        label = "Enter Gene IDs (comma- or newline-separated):",
+        inputId     = "id_list",
+        label       = "Enter Gene IDs (comma- or newline-separated):",
         placeholder = "BSU00240, BSU00260, BSU00280, BSU00290, BSU00300",
-        rows = 6
+        rows        = 6
       ),
       actionButton("analyze", "Analyze", class = "btn-primary"),
       br(), br(),
@@ -84,11 +131,9 @@ ui <- fluidPage(
 
 server <- function(input, output, session) {
 
-  # Update placeholder text to match the selected strain
   observeEvent(input$strain, {
     if (input$strain == "PG10") {
       updateTextAreaInput(session, "id_list",
-                          # PG10 always any
         placeholder = "ANY33920.1, ANY33921.1, ANY33922.1, ANY33923.1")
     } else {
       updateTextAreaInput(session, "id_list",
@@ -123,33 +168,10 @@ server <- function(input, output, session) {
       )
     ))
 
-    geneList <- factor(as.integer(universe %in% genesOfInterest))
-    names(geneList) <- universe
-
-    runOntology <- function(ontology) {
-      GOdata <- new("topGOdata",
-        description = "GO Enrichment Analysis",
-        ontology    = ontology,
-        allGenes    = geneList,
-        annot       = annFUN.gene2GO,
-        gene2GO     = g2go[[ontology]])
-
-      resultFisher <- runTest(GOdata, algorithm = "classic", statistic = "fisher")
-
-      res <- GenTable(GOdata,
-        classicFisher = resultFisher,
-        orderBy       = "classicFisher",
-        ranksOf       = "classicFisher",
-        topNodes      = 20)
-
-      res$FDR <- p.adjust(parseTopGOPval(res$classicFisher), method = "fdr")
-      res
-    }
-
     list(
-      BP = runOntology("BP"),
-      MF = runOntology("MF"),
-      CC = runOntology("CC")
+      BP = runGOFisher(g2go$BP, genesOfInterest, universe),
+      MF = runGOFisher(g2go$MF, genesOfInterest, universe),
+      CC = runGOFisher(g2go$CC, genesOfInterest, universe)
     )
   })
 
@@ -170,7 +192,7 @@ server <- function(input, output, session) {
 
   output$downloadData <- downloadHandler(
     filename = function() paste0("GO_analysis_results_", Sys.Date(), ".csv"),
-    content = function(file) {
+    content  = function(file) {
       req(analysis_results())
       all_results <- rbind(
         cbind(analysis_results()$BP, Ontology = "BP"),
