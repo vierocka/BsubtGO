@@ -12,64 +12,61 @@ goTermNames <- local({
   setNames(df$Term, df$GO.ID)
 })
 
-# Build a named list mapping gene IDs (id_col) to GO terms (go_col).
-# Rows with no GO annotations are silently skipped.
-prepareGene2GO <- function(data, id_col, go_col) {
-  universe <- as.character(data[, id_col])
-  rows <- apply(data[, c(id_col, go_col)], 1, function(x) {
-    terms <- unlist(strsplit(as.character(x[2]), split = " "))
-    terms <- terms[nzchar(terms)]
-    if (length(terms) == 0) return(NULL)
-    list(id = x[1], terms = terms)
-  })
-  rows <- rows[!sapply(rows, is.null)]
-  ids   <- sapply(rows, `[[`, "id")
-  terms <- lapply(rows, `[[`, "terms")
-  mapping <- setNames(terms, ids)
-  mapping[names(mapping) %in% universe]
+# Build inverted index: GO term -> gene IDs (vectorised, runs once at startup).
+# This is the key structure for fast per-request Fisher tests.
+prepareGO2Gene <- function(data, id_col, go_col) {
+  gene_ids   <- as.character(data[, id_col])
+  go_strings <- as.character(data[, go_col])
+
+  term_lists <- strsplit(go_strings, " ", fixed = TRUE)
+  term_lists <- lapply(term_lists, function(x) x[nzchar(x)])
+
+  genes_expanded <- rep(gene_ids, lengths(term_lists))
+  terms_expanded <- unlist(term_lists)
+
+  split(genes_expanded, terms_expanded)
 }
 
-# Pre-compute mappings for both strains
+# Pre-compute inverted indices for both strains at startup
+go2gene_bsub <- list(
+  BP = prepareGO2Gene(allGOwithConv, 2, 3),
+  MF = prepareGO2Gene(allGOwithConv, 2, 4),
+  CC = prepareGO2Gene(allGOwithConv, 2, 5)
+)
+go2gene_pg10 <- list(
+  BP = prepareGO2Gene(allGOwithConv, 1, 3),
+  MF = prepareGO2Gene(allGOwithConv, 1, 4),
+  CC = prepareGO2Gene(allGOwithConv, 1, 5)
+)
+
 geneUniverse_bsub <- as.character(allGOwithConv$IDbsub)
 geneUniverse_pg10 <- as.character(allGOwithConv$IDpg10)
 
-gene2GO_bsub <- list(
-  BP = prepareGene2GO(allGOwithConv, 2, 3),
-  MF = prepareGene2GO(allGOwithConv, 2, 4),
-  CC = prepareGene2GO(allGOwithConv, 2, 5)
-)
-gene2GO_pg10 <- list(
-  BP = prepareGene2GO(allGOwithConv, 1, 3),
-  MF = prepareGene2GO(allGOwithConv, 1, 4),
-  CC = prepareGene2GO(allGOwithConv, 1, 5)
-)
-
-# Fisher exact test for GO over-representation (one-sided, "greater").
-# Equivalent to topGO classic/Fisher but with no Bioconductor dependency.
-runGOFisher <- function(gene2go, genes_of_interest, universe) {
+# One-sided Fisher exact test for GO over-representation.
+# go2gene: named list, GO term -> character vector of gene IDs (inverted index)
+# Equivalent to topGO classic/Fisher; fast because each term lookup is O(1).
+runGOFisher <- function(go2gene, genes_of_interest, universe) {
   n_universe <- length(universe)
   n_selected <- length(genes_of_interest)
 
-  all_terms <- unique(unlist(gene2go))
-
-  rows <- lapply(all_terms, function(go_id) {
-    annotated     <- names(gene2go)[vapply(gene2go, function(x) go_id %in% x, logical(1))]
-    n_annotated   <- length(annotated)
-    n_sig         <- sum(genes_of_interest %in% annotated)
+  rows <- lapply(names(go2gene), function(go_id) {
+    annotated   <- go2gene[[go_id]]
+    n_annotated <- length(annotated)
+    n_sig       <- sum(annotated %in% genes_of_interest)
     if (n_sig == 0) return(NULL)
 
     mat <- matrix(c(
       n_sig,
-      n_selected - n_sig,
-      n_annotated - n_sig,
-      n_universe - n_selected - (n_annotated - n_sig)
+      n_selected   - n_sig,
+      n_annotated  - n_sig,
+      n_universe   - n_selected - (n_annotated - n_sig)
     ), nrow = 2)
 
     p <- fisher.test(mat, alternative = "greater")$p.value
 
     data.frame(
       GO.ID       = go_id,
-      Term        = unname(goTermNames[go_id] %||% go_id),
+      Term        = unname(goTermNames[go_id]),
       Annotated   = n_annotated,
       Significant = n_sig,
       Expected    = round(n_selected * n_annotated / n_universe, 2),
@@ -85,21 +82,19 @@ runGOFisher <- function(gene2go, genes_of_interest, universe) {
     pvalue = numeric(), FDR = numeric()
   ))
 
-  res      <- do.call(rbind, rows)
-  res      <- res[order(res$pvalue), ]
-  res$FDR  <- signif(p.adjust(res$pvalue, method = "fdr"), 4)
+  res     <- do.call(rbind, rows)
+  res     <- res[order(res$pvalue), ]
+  res$FDR <- signif(p.adjust(res$pvalue, method = "fdr"), 4)
   head(res, 20)
 }
-
-`%||%` <- function(a, b) if (!is.na(a) && nzchar(a)) a else b
 
 ui <- fluidPage(
   titlePanel("Gene Ontology (GO) Term Analysis of Bacillus subtilis"),
   sidebarLayout(
     sidebarPanel(
       selectInput(
-        inputId = "strain",
-        label   = "Select strain of Bacillus subtilis:",
+        inputId  = "strain",
+        label    = "Select strain of Bacillus subtilis:",
         choices  = c("BSUB168", "PG10"),
         selected = "BSUB168"
       ),
@@ -152,10 +147,10 @@ server <- function(input, output, session) {
 
     if (input$strain == "PG10") {
       universe <- geneUniverse_pg10
-      g2go     <- gene2GO_pg10
+      g2go     <- go2gene_pg10
     } else {
       universe <- geneUniverse_bsub
-      g2go     <- gene2GO_bsub
+      g2go     <- go2gene_bsub
     }
 
     genesOfInterest <- id_vector[id_vector %in% universe]
