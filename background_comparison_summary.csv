@@ -1,0 +1,5 @@
+category,n_windows,pct
+Both significant (FDR < 0.05),596,59.6
+PG10 only — false negatives with BSU168,6,0.6
+BSU168 only — false positives with BSU168,39,3.9
+Neither significant,359,35.9
