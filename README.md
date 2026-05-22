@@ -2,7 +2,7 @@
 
 A Shiny web application for Gene Ontology (GO) enrichment analysis of *Bacillus subtilis* gene sets, designed for wet-lab biologists working with strains other than the standard reference.
 
-**Live app: [https://vierakovacova.shinyapps.io/BsubtilisGO/](https://vierakovacova.shinyapps.io/BsubtilisGO/)**
+**Live app: [https://vierakovacova.shinyapps.io/BsubtilisGO/](https://vierakovacova.shinyapps.io/BsubtGO/)**
 
 ---
 
@@ -33,7 +33,7 @@ This is particularly relevant for engineered or reduced-genome strains whose pro
 
 ## Try it — live app
 
-> **[https://vierakovacova.shinyapps.io/BsubtilisGO/](https://vierakovacova.shinyapps.io/BsubtilisGO/)**
+> **[https://vierakovacova.shinyapps.io/BsubtGO/](https://vierakovacova.shinyapps.io/BsubtGO/)**
 
 The app runs in any browser — no R installation required. To test a PG10 gene set against the correct strain-matched background:
 
